@@ -116,8 +116,8 @@ where
     let uuid = result.into_inner().uuid;
     info!("Bundle sent. UUID: {:?}", uuid);
 
-    info!("Waiting for 5 seconds to hear results...");
-    let mut time_left = 5000;
+    info!("Waiting for 120 seconds to hear results...");
+    let mut time_left = 120000;
     while let Ok(Some(Ok(results))) = timeout(
         Duration::from_millis(time_left),
         bundle_results_subscription.next(),
@@ -125,12 +125,18 @@ where
     .await
     {
         let instant = Instant::now();
+
+        if results.bundle_id != uuid {
+            continue;
+        }
         info!("bundle results: {:?}", results);
         match results.result {
             Some(BundleResultType::Accepted(Accepted {
                 slot: _s,
                 validator_identity: _v,
-            })) => {}
+            })) => {
+                return Ok(())
+            }
             Some(BundleResultType::Rejected(rejected)) => {
                 match rejected.reason {
                     Some(Reason::WinningBatchBidRejected(WinningBatchBidRejected {
@@ -154,10 +160,11 @@ where
                         )))
                     }
                     Some(Reason::SimulationFailure(SimulationFailure { tx_signature, msg })) => {
-                        return Err(Box::new(BundleRejectionError::SimulationFailure(
-                            tx_signature,
-                            msg,
-                        )))
+                        // return Err(Box::new(BundleRejectionError::SimulationFailure(
+                        //     tx_signature,
+                        //     msg,
+                        // )))
+                        return Ok(())
                     }
                     Some(Reason::InternalError(InternalError { msg })) => {
                         return Err(Box::new(BundleRejectionError::InternalError(msg)))

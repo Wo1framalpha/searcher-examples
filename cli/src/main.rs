@@ -254,6 +254,75 @@ where
                 payer_keypair.pubkey(),
             );
 
+            let mut bundle_results_shared_subscription = client
+                .subscribe_bundle_results(SubscribeBundleResultsRequest {})
+                .await
+                .expect("subscribe to bundle results")
+                .into_inner();
+
+            tokio::spawn(async move {
+                while let Some(Ok(results)) = bundle_results_shared_subscription.next().await {
+                    info!(
+                        "bundle_results_shared_subscription bundle results: {:?}",
+                        results
+                    );
+                }
+            });
+
+            let mut bundle_results_subscription = client
+                .subscribe_bundle_results(SubscribeBundleResultsRequest {})
+                .await
+                .expect("subscribe to bundle results")
+                .into_inner();
+
+            // wait for jito-solana leader slot
+            let mut is_leader_slot = false;
+            while !is_leader_slot {
+                let next_leader = client
+                    .get_next_scheduled_leader(NextScheduledLeaderRequest {
+                        regions: vec!["ny".to_string(), "dallas".to_string()],
+                    })
+                    .await
+                    .expect("gets next scheduled leader")
+                    .into_inner();
+                // let current_slot = rpc_client.get_slot().await.unwrap();
+                let num_slots = next_leader.next_leader_slot - next_leader.current_slot;
+                is_leader_slot = num_slots <= 2;
+                info!(
+                    "next jito leader slot in {num_slots} slots in {}",
+                    next_leader.next_leader_region
+                );
+                sleep(Duration::from_millis(500)).await;
+            }
+
+            // build + sign the transactions
+            let blockhash = rpc_client
+                .get_latest_blockhash()
+                .await
+                .expect("get blockhash");
+            let txs: Vec<_> = (0..num_txs)
+                .map(|i| {
+                    VersionedTransaction::from(Transaction::new_signed_with_payer(
+                        &[
+                            build_memo(format!("jito bundle {i}: {message}").as_bytes(), &[]),
+                            transfer(&payer_keypair.pubkey(), &tip_account, lamports),
+                        ],
+                        Some(&payer_keypair.pubkey()),
+                        &[&payer_keypair],
+                        blockhash,
+                    ))
+                })
+                .collect();
+
+            send_bundle_with_confirmation(
+                &txs,
+                &rpc_client,
+                &mut client,
+                &mut bundle_results_subscription,
+            )
+            .await
+            .expect("Sending bundle failed");
+
             let mut bundle_results_subscription = client
                 .subscribe_bundle_results(SubscribeBundleResultsRequest {})
                 .await
@@ -306,6 +375,8 @@ where
             )
             .await
             .expect("Sending bundle failed");
+
+            sleep(Duration::from_secs(180)).await;
         }
     }
 }
